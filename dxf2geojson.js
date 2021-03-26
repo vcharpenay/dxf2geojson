@@ -53,6 +53,39 @@ function asArray(p) {
     return [ rounded(p.x), rounded(p.y), rounded(p.z) ];
 }
 
+function asCoordinateArray(entities) {
+    if (entities.length == 1) {
+        return [
+            asArray(entities[0].start),
+            asArray(entities[0].end)
+        ];
+    } else if (entities.length > 1) {
+        return entities.reduce((coords, e, i, entities) => {
+            if (e.type == 'LINE') {
+                if (i > 0) {
+                    let prev = entities[i - 1];
+                    let next = entities[i];
+    
+                    if (joins(next, prev)) coords.push(asArray(next.start));
+                    else if (joinsSymmetrically(next, prev)) coords.push(asArray(next.end));
+                    else console.error('Entities in the list do not join.');
+                } else {
+                    let first = entities[0];
+                    let next = entities[1];
+    
+                    if (joins(first, next)) coords.push(asArray(first.start), asArray(first.end));
+                    else if (joinsSymmetrically(first, next)) coords.push(asArray(first.end), asArray(first.start));
+                    else console.error('First entities in the list do not join.');
+                }
+            } else {
+                console.error(`Entity of type ${e.type} found in list.`);
+            }
+
+            return coords;
+        }, []);
+    }
+}
+
 function dist(p1, p2) {
     if (!(p1 instanceof Array)) p1 = asArray(p1);
     if (!(p2 instanceof Array)) p2 = asArray(p2);
@@ -64,42 +97,17 @@ function dist(p1, p2) {
 }
 
 function asLineString(entities) {
-    let coords = [
-        asArray(entities[0].start),
-        asArray(entities[entities.length - 1].end)
-    ];
+    if (!entities || entities.length == 0) return;
 
     return {
         type: 'LineString',
-        coordinates: coords
-    }
+        coordinates: asCoordinateArray(entities)
+    };
 }
 
 function asPolygon(entities) {
     if (entities.length > 1) {
-        let coords = entities.reduce((coords, e, i, entities) => {
-            if (e.type == 'LINE') {
-                if (i > 0) {
-                    let prev = entities[i - 1];
-                    let next = entities[i];
-
-                    if (joins(next, prev)) coords.push(asArray(next.start));
-                    else if (joinsSymmetrically(next, prev)) coords.push(asArray(next.end));
-                    else console.error('Entities in the polygon do not join.');
-                } else {
-                    let first = entities[0];
-                    let next = entities[1];
-
-                    if (joins(first, next)) coords.push(asArray(first.start), asArray(first.end));
-                    else if (joinsSymmetrically(first, next)) coords.push(asArray(first.end), asArray(first.start));
-                    else console.error('First entities in the polygon do not join.');
-                }
-            } else {
-                console.error(`Entity of type ${e.type} found in Polygon.`);
-            }
-    
-            return coords;
-        }, []);
+        let coords = asCoordinateArray(entities);
     
         if (dist(coords[0], coords[coords.length - 1]) > MIN_PRECISION) {
             console.error('Poylgon is not closed');
@@ -150,6 +158,7 @@ function aggregate(entities) {
             neighbors.sort(byDist);
 
             // favor non-aligned lines to close polygon as fast as possible
+            // TODO alternative: always go towards the origin of the path
             let aligned = neighbors.filter(e => areAligned(next, e));
             let others = neighbors.filter(e => aligned.indexOf(e) < 0);
             neighbors = [...others, ...aligned];
@@ -164,7 +173,15 @@ function aggregate(entities) {
         agg.push(path);
     }
 
-    fs.writeFileSync('tmp.json', JSON.stringify(agg));
+    let tmp = {
+        type: 'FeatureCollection',
+        features: agg.map((entities, i) => ({
+            type: 'Feature',
+            properties: { id: i },
+            geometry: asLineString(entities)
+        }))
+    };
+    fs.writeFileSync('tmp.json', JSON.stringify(tmp));
 
     return agg;
 }
