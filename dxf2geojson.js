@@ -1,5 +1,6 @@
 const fs = require('fs');
 const dxf = require('dxf');
+const { indexOf } = require('lodash');
 
 /////////////////////////////////////////////////////// basic GeoJSON transforms
 
@@ -21,6 +22,26 @@ function joinsSymmetrically(e, ep) {
         || dist(e.end, ep.end) < MIN_PRECISION
         || dist(e.start, ep.start) < MIN_PRECISION
         || dist(e.start, ep.end) < MIN_PRECISION;
+}
+
+function areAligned(e, ep) {
+    // let e1 = asArray(e.start);
+    // let e2 = asArray(e.end);
+    // let ep1 = asArray(ep.start);
+    // let ep2 = asArray(ep.end);
+
+    // let v = [ e2[0] - e1[0], e2[1] - e1[1], e2[2] - e1[2] ];
+    // let vp = [ ep2[0] - ep1[0], ep2[1] - ep1[1], ep2[2] - ep1[2] ];
+
+    // let sum = [ v[0] + vp[0], v[1] + vp[1], v[2] + vp[2] ];
+
+    let d = dist(e.start, e.end);
+    let dp = dist(ep.start, ep.end);
+    let dsum = dist(e.start, ep.end);
+
+    return d - dsum < MIN_PRECISION
+        || dp - dsum < MIN_PRECISION
+        || (d + dp) - dsum < MIN_PRECISION;
 }
 
 function rounded(val) {
@@ -81,8 +102,9 @@ function asPolygon(entities) {
         }, []);
     
         if (dist(coords[0], coords[coords.length - 1]) > MIN_PRECISION) {
-            coords.push(coords[0]); // to enforce polygon is closed
             console.error('Poylgon is not closed');
+            // coords.push(coords[0]); // to enforce polygon is closed
+            return;
         }
 
         return {
@@ -124,9 +146,17 @@ function aggregate(entities) {
             let neighbors = joinIndex[i].filter(e => path.indexOf(e) < 0);
 
             // sort neighbors by their distance
-            // TODO build all possible polygons and take smallest? (With pruning)
             let byDist = (e, ep) => dist(e.start, e.end) - dist(ep.start, ep.end);
-            next = neighbors.sort(byDist)[0];
+            neighbors.sort(byDist);
+
+            // favor non-aligned lines to close polygon as fast as possible
+            let aligned = neighbors.filter(e => areAligned(next, e));
+            let others = neighbors.filter(e => aligned.indexOf(e) < 0);
+            neighbors = [...others, ...aligned];
+
+            next = neighbors[0];
+
+            // TODO build all possible polygons and take smallest? (With pruning)
 
             if (next) i = entities.indexOf(next);
         }
@@ -169,17 +199,17 @@ let bearingWalls = aggregate(bearingWallEntities)
 
 // dividing walls
 
-let divWallEntities = parsed.entities.filter(e => e.layer == 'CLOIS4' && e.type == 'LINE');
+// let divWallEntities = parsed.entities.filter(e => e.layer == 'CLOIS4' && e.type == 'LINE');
 
-let divWalls = aggregate(divWallEntities)
-.map(asPolygon)
-.filter(p => p) // excludes polygons for which transformation failed 
-.map(p => ({
-    type: 'Feature',
-    properties: { type: 'DividingWall' },
-    geometry: p
-}));
-// let divWalls = [];
+// let divWalls = aggregate(divWallEntities)
+// .map(asPolygon)
+// .filter(p => p) // excludes polygons for which transformation failed 
+// .map(p => ({
+//     type: 'Feature',
+//     properties: { type: 'DividingWall' },
+//     geometry: p
+// }));
+let divWalls = [];
 
 // doors
 
