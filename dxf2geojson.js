@@ -1,189 +1,119 @@
 const fs = require('fs');
 const dxf = require('dxf');
-const { indexOf } = require('lodash');
-
-/////////////////////////////////////////////////////// basic GeoJSON transforms
+const math = require('mathjs');
 
 const MIN_PRECISION = 0.01;
 
-function joins(e1, e2) {
-    // TODO other types? E.g. ELLIPSE
-    if (e1.type != 'LINE' || e2.type != 'LINE') return false;
-
-    return dist(e1.end, e2.start) < MIN_PRECISION
-        || dist(e1.end, e2.end) < MIN_PRECISION;
+function point2vec(p) {
+    return [p.x, p.y, p.z];
 }
 
-function joinsSymmetrically(e, ep) {
-    // TODO same as above
-    if (e.type != 'LINE' || ep.type != 'LINE') return false;
-
-    return dist(e.end, ep.start) < MIN_PRECISION
-        || dist(e.end, ep.end) < MIN_PRECISION
-        || dist(e.start, ep.start) < MIN_PRECISION
-        || dist(e.start, ep.end) < MIN_PRECISION;
+function almostEq(p1, p2) {
+    return math.norm(math.subtract(p2, p1)) < MIN_PRECISION;
 }
 
-function areAligned(e, ep) {
-    // let e1 = asArray(e.start);
-    // let e2 = asArray(e.end);
-    // let ep1 = asArray(ep.start);
-    // let ep2 = asArray(ep.end);
-
-    // let v = [ e2[0] - e1[0], e2[1] - e1[1], e2[2] - e1[2] ];
-    // let vp = [ ep2[0] - ep1[0], ep2[1] - ep1[1], ep2[2] - ep1[2] ];
-
-    // let sum = [ v[0] + vp[0], v[1] + vp[1], v[2] + vp[2] ];
-
-    let d = dist(e.start, e.end);
-    let dp = dist(ep.start, ep.end);
-    let dsum = dist(e.start, ep.end);
-
-    return d - dsum < MIN_PRECISION
-        || dp - dsum < MIN_PRECISION
-        || (d + dp) - dsum < MIN_PRECISION;
-}
-
-function rounded(val) {
-    return Math.round(val / MIN_PRECISION) * MIN_PRECISION;
-}
-
-function asArray(p) {
-    // TODO round up to 2 decimals
-    return [ rounded(p.x), rounded(p.y), rounded(p.z) ];
-}
-
-function asCoordinateArray(entities) {
-    if (entities.length == 1) {
-        return [
-            asArray(entities[0].start),
-            asArray(entities[0].end)
-        ];
-    } else if (entities.length > 1) {
-        return entities.reduce((coords, e, i, entities) => {
-            if (e.type == 'LINE') {
-                if (i > 0) {
-                    let prev = entities[i - 1];
-                    let next = entities[i];
-    
-                    if (joins(next, prev)) coords.push(asArray(next.start));
-                    else if (joinsSymmetrically(next, prev)) coords.push(asArray(next.end));
-                    else console.error('Entities in the list do not join.');
-                } else {
-                    let first = entities[0];
-                    let next = entities[1];
-    
-                    if (joins(first, next)) coords.push(asArray(first.start), asArray(first.end));
-                    else if (joinsSymmetrically(first, next)) coords.push(asArray(first.end), asArray(first.start));
-                    else console.error('First entities in the list do not join.');
-                }
-            } else {
-                console.error(`Entity of type ${e.type} found in list.`);
+function lines2points(entities) {
+    return entities.reduce((list, e) => {
+        if (e.type == 'LINE') {
+            // add starting point if not already in the list
+            let startCoords = point2vec(e.start);
+            let i1 = list.findIndex(p => almostEq(p.coords, startCoords));
+            if (i1 < 0) {
+                list.push({ coords: startCoords, neighbors: [] });
+                i1 = list.length - 1;
             }
 
-            return coords;
-        }, []);
-    }
-}
+            // add end point if not already in the list
+            let endCoords = point2vec(e.end);
+            let i2 = list.findIndex(p => almostEq(p.coords, endCoords));
+            if (i2 < 0) {
+                list.push({ coords: endCoords, neighbors: [] });
+                i2 = list.length - 1;
+            }
 
-function dist(p1, p2) {
-    if (!(p1 instanceof Array)) p1 = asArray(p1);
-    if (!(p2 instanceof Array)) p2 = asArray(p2);
-
-    let x2 = (p2[0] - p1[0]) * (p2[0] - p1[0]);
-    let y2 = (p2[1] - p1[1]) * (p2[1] - p1[1]);
-    let z2 = (p2[2] - p1[2]) * (p2[2] - p1[2]);
-    return Math.sqrt(x2 + y2 + z2);
-}
-
-function asLineString(entities) {
-    if (!entities || entities.length == 0) return;
-
-    return {
-        type: 'LineString',
-        coordinates: asCoordinateArray(entities)
-    };
-}
-
-function asPolygon(entities) {
-    if (entities.length > 1) {
-        let coords = asCoordinateArray(entities);
-    
-        if (dist(coords[0], coords[coords.length - 1]) > MIN_PRECISION) {
-            console.error('Poylgon is not closed');
-            // coords.push(coords[0]); // to enforce polygon is closed
-            return;
+            // update neighbors of starting point and end point
+            let p1 = list[i1], p2 = list[i2];
+            if (!p1.neighbors.some(i => almostEq(list[i].coords, p2.coords))) p1.neighbors.push(i2);
+            if (!p2.neighbors.some(i => almostEq(list[i].coords, p1.coords))) p2.neighbors.push(i1);
         }
 
-        return {
-            type: 'Polygon',
-            coordinates: [ coords ]
-        };
-    } else {
-        console.error('Trying to turn a single entity into a polygon. A polygon requires at least two entities.');
-    }
+        return list;
+    }, []);
 }
 
-///////////////////////////////////////////////////////// DXF aggregate function
-
-function aggregate(entities) {
-    // find joins (entity index -> list of entity indices)
-
-    let joinIndex = entities.map(e => {
-        return entities.filter(ep => e != ep && joinsSymmetrically(e, ep));
-    });
-
-    // fixed point: walk paths; if several joins, choose shortest line
-
-    let agg = [];
+function points2paths(points) {
+    let paths = [];
     let processed = new Set();
-    while (processed.size < entities.length) {
+
+    while (processed.size < points.length) {
         let path = [];
 
         // find starting point that has not been processed yet
         let i = 0;
         while (processed.has(i)) i++;
 
-        // walk path until no more join is found or path is closed
-        let next = entities[i];
-        while (next && !(path.length > 2 && joins(path[0], path[path.length - 1]))) {
-            path.push(next);
+        // walk path until no neighbor is found or path is closed
+        while (i != undefined) {
+            let p = points[i];
+
+            path.push(p.coords);
             processed.add(i);
 
-            // no walk backward
-            let neighbors = joinIndex[i].filter(e => path.indexOf(e) < 0);
+            // no walk backward unless to close loop
+            let ifNotPrevious = ip => !(path.length > 1 && almostEq(path[path.length - 2], points[ip].coords));
+            let ifNotInPath = ip => !path.some((coords, ci) => ci > 0 && almostEq(coords, points[ip].coords));
+            let neighbors = p.neighbors
+                .filter(ifNotPrevious)
+                .filter(ifNotInPath);
 
-            // sort neighbors by their distance
-            let byDist = (e, ep) => dist(e.start, e.end) - dist(ep.start, ep.end);
+            // sort neighbors by their distance to current point
+            let byDist = (ip, is) => {
+                let vp = math.subtract(points[ip].coords, p.coords);
+                let vs = math.subtract(points[is].coords, p.coords);
+                return math.norm(vp) - math.norm(vs);
+            };
             neighbors.sort(byDist);
 
-            // favor non-aligned lines to close polygon as fast as possible
-            // TODO alternative: always go towards the origin of the path
-            let aligned = neighbors.filter(e => areAligned(next, e));
-            let others = neighbors.filter(e => aligned.indexOf(e) < 0);
-            neighbors = [...others, ...aligned];
+            // TODO choose neighbor that is closest to path's origin point
 
-            next = neighbors[0];
+            i = neighbors[0];
 
-            // TODO build all possible polygons and take smallest? (With pruning)
-
-            if (next) i = entities.indexOf(next);
+            // TODO remove
+            if (path.length > 1 && almostEq(p.coords, path[0])) i = undefined;
         }
 
-        agg.push(path);
+        paths.push(path);
     }
 
-    let tmp = {
-        type: 'FeatureCollection',
-        features: agg.map((entities, i) => ({
-            type: 'Feature',
-            properties: { id: i },
-            geometry: asLineString(entities)
-        }))
-    };
-    fs.writeFileSync('tmp.json', JSON.stringify(tmp));
+    return paths;
+}
 
-    return agg;
+function path2feature(path) {
+    if (path.length > 2 && almostEq(path[0], path[path.length - 1])) {
+        // ensure first/last coordinates are strictly equal
+        path.pop();
+        path.push(path[0]);
+
+        // path is closed -> polygon
+        return {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+                type: 'Polygon',
+                coordinates: [ path ]
+            }
+        };
+    } else {
+        // path is open -> line string
+        return {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+                type: 'LineString',
+                coordinates: path
+            }
+        };
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////// main
@@ -202,51 +132,30 @@ if (fs.existsSync('4ET.json')) {
 
 // bearing walls
 
-let bearingWallEntities = parsed.entities.filter(e => e.layer == 'MURS' && e.type == 'LINE');
+let bearingWallEntities = parsed.entities.filter(e => e.layer == 'MURS');
+let divWallEntities = parsed.entities.filter(e => e.layer == 'CLOIS4');
 
-let bearingWalls = aggregate(bearingWallEntities)
-.map(asPolygon)
-.filter(p => p) // excludes polygons for which transformation failed 
-.map(p => ({
-    type: 'Feature',
-    properties: { type: 'BearingWall' },
-    geometry: p
-}));
-// let bearingWalls = [];
-
-// dividing walls
-
-// let divWallEntities = parsed.entities.filter(e => e.layer == 'CLOIS4' && e.type == 'LINE');
-
-// let divWalls = aggregate(divWallEntities)
-// .map(asPolygon)
-// .filter(p => p) // excludes polygons for which transformation failed 
-// .map(p => ({
-//     type: 'Feature',
-//     properties: { type: 'DividingWall' },
-//     geometry: p
-// }));
-let divWalls = [];
-
-// doors
-
-// let doorEntities = parsed.entities.filter(e => e.layer == 'PORTE' && e.type == 'LINE');
-
-// let doors = aggregate(doorEntities)
-// .map(chain => ({
-//     type: 'Feature',
-//     properties: { type: 'Door' },
-//     geometry: asLineString(chain)
-// }));
-let doors = [];
-
-// windows (TODO)
-
-let windows = [];
-
-let geojson = {
-    type: 'FeatureCollection',
-    features: [...bearingWalls, ...divWalls, ...doors, ... windows]
+let lines2features = entities => {
+    return points2paths(lines2points(entities)).map((path, i) => {
+        let f = path2feature(path);
+        f.properties.id = i;
+        return f;
+    });
 };
 
-fs.writeFileSync('4ET.geojson', JSON.stringify(geojson));
+let withType = (feature, type) => {
+    feature.properties.type = type;
+    return feature;
+};
+
+let coll = {
+    type: 'FeatureCollection',
+    features: [
+        ...lines2features(bearingWallEntities).map(f => withType(f, 'BearingWall')),
+        ...lines2features(divWallEntities).map(f => withType(f, 'DividingWall'))
+    ]
+}
+
+// TODO add PORTE, VITRE
+
+fs.writeFileSync('4ET.geojson', JSON.stringify(coll));
