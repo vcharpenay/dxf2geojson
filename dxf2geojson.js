@@ -4,7 +4,7 @@ const math = require('mathjs');
 
 const MIN_PRECISION = 0.01;
 
-function point2vec(p) {
+function obj2vec(p) {
     return [p.x, p.y, p.z];
 }
 
@@ -13,10 +13,10 @@ function almostEq(p1, p2) {
 }
 
 function lines2points(entities) {
-    return entities.reduce((list, e) => {
+    let points = entities.reduce((list, e) => {
         if (e.type == 'LINE') {
             // add starting point if not already in the list
-            let startCoords = point2vec(e.start);
+            let startCoords = obj2vec(e.start);
             let i1 = list.findIndex(p => almostEq(p.coords, startCoords));
             if (i1 < 0) {
                 list.push({ coords: startCoords, neighbors: [] });
@@ -24,7 +24,7 @@ function lines2points(entities) {
             }
 
             // add end point if not already in the list
-            let endCoords = point2vec(e.end);
+            let endCoords = obj2vec(e.end);
             let i2 = list.findIndex(p => almostEq(p.coords, endCoords));
             if (i2 < 0) {
                 list.push({ coords: endCoords, neighbors: [] });
@@ -39,9 +39,74 @@ function lines2points(entities) {
 
         return list;
     }, []);
+
+    let pl = points.length;
+    let ll = points.reduce((cnt, p) => cnt + p.neighbors.length, 0);
+    console.log(`found ${pl} points and ${ll} lines`);
+
+    return points;
+}
+
+function aligned(p, pp, ps) {
+    let vp = math.subtract(pp, p);
+    let vs = math.subtract(ps, p);
+    let v = math.add(vp, vs);
+
+    return math.abs(math.norm(v) - (math.norm(vp) + math.norm(vs))) < MIN_PRECISION;
+}
+
+function normalize(points) {
+    let triples = [];
+
+    // find triples of points that are aligned
+    points.forEach((p, i) => {
+        p.neighbors.forEach(ip => {
+            p.neighbors.forEach(is => {
+                let pp = points[ip];
+                let ps = points[is];
+
+                if (ip != is && aligned(p.coords, pp.coords, ps.coords)) {
+                    let t = [i, ip, is];
+
+                    // sort points as they appear on the line, left to right
+                    t.sort((i1, i2) => math.dot(p.coords, points[i1].coords) - math.dot(p.coords, points[i2].coords));
+
+                    if (!triples.some(tp => t[0] == tp[0] && t[1] == tp[1] && t[2] == tp[2])) triples.push(t);
+                }
+            })
+        });
+    });
+
+    console.log(`found ${triples.length} alignments to normalize`);
+
+    // normalize neighborhood relation for triples of aligned points
+    triples.forEach(t => {
+        let p1 = points[t[0]];
+        let p2 = points[t[1]];
+        let p3 = points[t[2]];
+
+        // remove first and last points from each other's neighborhood
+        p1.neighbors = p1.neighbors.filter(i => !almostEq(p3.coords, points[i].coords));
+        p3.neighbors = p3.neighbors.filter(i => !almostEq(p1.coords, points[i].coords));
+
+        // add both points to middle points's neighborhood
+        if (!p2.neighbors.some(i => almostEq(p1.coords, points[i].coords)))  p2.neighbors.push(t[0]);
+        if (!p2.neighbors.some(i => almostEq(p3.coords, points[i].coords)))  p2.neighbors.push(t[2]);
+
+        // add middle point to firs and last points neighborhood
+        if (!p1.neighbors.some(i => almostEq(p2.coords, points[i].coords)))  p1.neighbors.push(t[1]);
+        if (!p3.neighbors.some(i => almostEq(p2.coords, points[i].coords)))  p3.neighbors.push(t[1]);
+    });
+
+    let pl = points.length;
+    let ll = points.reduce((cnt, p) => cnt + p.neighbors.length, 0);
+    console.log(`found ${pl} points and ${ll} lines after normalization`);
 }
 
 function points2paths(points) {
+    // TODO debug
+    normalize(points);
+
     let paths = [];
     let processed = new Set();
 
@@ -59,6 +124,9 @@ function points2paths(points) {
             path.push(p.coords);
             processed.add(i);
 
+            // path is closed, exit loop
+            if (path.length > 1 && almostEq(p.coords, path[0])) break;
+
             // no walk backward unless to close loop
             let ifNotPrevious = ip => !(path.length > 1 && almostEq(path[path.length - 2], points[ip].coords));
             let ifNotInPath = ip => !path.some((coords, ci) => ci > 0 && almostEq(coords, points[ip].coords));
@@ -66,24 +134,21 @@ function points2paths(points) {
                 .filter(ifNotPrevious)
                 .filter(ifNotInPath);
 
-            // sort neighbors by their distance to current point
+            // sort neighbors by their distance to path's starting point
             let byDist = (ip, is) => {
-                let vp = math.subtract(points[ip].coords, p.coords);
-                let vs = math.subtract(points[is].coords, p.coords);
-                return math.norm(vp) - math.norm(vs);
+                    let vp = math.subtract(points[ip].coords, path[0]);
+                    let vs = math.subtract(points[is].coords, path[0]);
+                    return math.norm(vp) - math.norm(vs);
             };
             neighbors.sort(byDist);
 
-            // TODO choose neighbor that is closest to path's origin point
-
             i = neighbors[0];
-
-            // TODO remove
-            if (path.length > 1 && almostEq(p.coords, path[0])) i = undefined;
         }
 
         paths.push(path);
     }
+
+    console.log(`found ${paths.length} paths from point list`);
 
     return paths;
 }
@@ -126,36 +191,34 @@ if (fs.existsSync('4ET.json')) {
     let f = fs.readFileSync('../4ET.dxf', 'utf-8');
     const helper = new dxf.Helper(f);
 
-    parsed = helper.parsed;
+    parsed = helper.groups;
     fs.writeFileSync('4ET.json', JSON.stringify(parsed));
 }
 
-// bearing walls
+let lines2features = (entities, layer) => {
+    console.log(`processing layer ${layer}...`);
 
-let bearingWallEntities = parsed.entities.filter(e => e.layer == 'MURS');
-let divWallEntities = parsed.entities.filter(e => e.layer == 'CLOIS4');
-
-let lines2features = entities => {
-    return points2paths(lines2points(entities)).map((path, i) => {
+    let features = points2paths(lines2points(entities)).map((path, i) => {
         let f = path2feature(path);
         f.properties.id = i;
+        f.properties.layer = layer;
         return f;
     });
+
+    console.log(`created ${features.filter(f => f.geometry.type == 'Polygon').length} polygons`);
+    console.log(`created ${features.filter(f => f.geometry.type == 'LineString').length} line strings`);
+
+    return features;
 };
 
-let withType = (feature, type) => {
-    feature.properties.type = type;
-    return feature;
-};
+// let layers = ['MURS', 'CLOIS4']; // TODO PORTE, VITRE
+let layers = ['MURS'];
 
 let coll = {
     type: 'FeatureCollection',
-    features: [
-        ...lines2features(bearingWallEntities).map(f => withType(f, 'BearingWall')),
-        ...lines2features(divWallEntities).map(f => withType(f, 'DividingWall'))
-    ]
-}
-
-// TODO add PORTE, VITRE
+    features: layers
+        .map(l => lines2features(parsed[l], l))
+        .reduce((agg, f) => agg.concat(f))
+};
 
 fs.writeFileSync('4ET.geojson', JSON.stringify(coll));
