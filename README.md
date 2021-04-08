@@ -9,7 +9,7 @@ The `dxf2geojson` translator attempts to reconstructs GeoJSON geometries
 
 ## Usage
 
-`̀``sh
+```sh
 $ npm install
 $ node dxf2geojson.js <in.dxf> <out.geojson>
 ```
