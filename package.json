@@ -1,0 +1,14 @@
+{
+    "description": "A translater from DXF to GeoJSON",
+    "name": "dxf2gejson",
+    "version": "0.0.1",
+    "keywords": [
+        "dxf",
+        "geojson"
+    ],
+    "dependencies": {
+        "dxf": "4.4.4",
+        "mathjs": "9.3.0"
+    },
+    "main": "dxf2geojson.js"
+}
