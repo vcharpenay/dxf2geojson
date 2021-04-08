@@ -47,30 +47,25 @@ function lines2points(entities) {
     return points;
 }
 
-function aligned(p, pp, ps) {
-    let vp = math.subtract(pp, p);
-    let vs = math.subtract(ps, p);
-    let v = math.add(vp, vs);
-
-    return math.abs(math.norm(v) - (math.norm(vp) + math.norm(vs))) < MIN_PRECISION;
+function aligned(p1, p, p2) {
+    // note: only considers the case where pp is within [p, ps]
+    // // TODO not a proper inequation (but good enough)
+    return math.distance(p1, p) + math.distance(p, p2) - math.distance(p1, p2) < MIN_PRECISION * MIN_PRECISION;
 }
 
 function normalize(points) {
     let triples = [];
 
     // find triples of points that are aligned
-    points.forEach((p, i) => {
-        p.neighbors.forEach(ip => {
-            p.neighbors.forEach(is => {
-                let pp = points[ip];
-                let ps = points[is];
+    points.forEach((p1, i1) => {
+        p1.neighbors.forEach(i2 => {
+            let p2 = points[i2];
 
-                if (ip != is && aligned(p.coords, pp.coords, ps.coords)) {
-                    let t = [i, ip, is];
+            points.forEach((p, i) => {
+                if (i != i1 && i != i2 && aligned(p1.coords, p.coords, p2.coords)) {
+                    let t = [i1, i, i2];
 
-                    // sort points as they appear on the line, left to right
-                    t.sort((i1, i2) => math.dot(p.coords, points[i1].coords) - math.dot(p.coords, points[i2].coords));
-
+                    // note: duplicate entries: [p1, p, p2] and [p2, p, p1]
                     if (!triples.some(tp => t[0] == tp[0] && t[1] == tp[1] && t[2] == tp[2])) triples.push(t);
                 }
             })
