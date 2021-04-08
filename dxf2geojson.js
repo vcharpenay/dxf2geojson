@@ -204,17 +204,18 @@ function path2feature(path) {
 
 /////////////////////////////////////////////////////////////////////////// main
 
-let parsed = {};
-
-if (fs.existsSync('4ET.json')) {
-    parsed = JSON.parse(fs.readFileSync('4ET.json'));
-} else {
-    let f = fs.readFileSync('../4ET.dxf', 'utf-8');
-    const helper = new dxf.Helper(f);
-
-    parsed = helper.groups;
-    fs.writeFileSync('4ET.json', JSON.stringify(parsed));
+if (process.argv.length < 4) {
+    console.log('Usage: node dxf2geojson.js <in.dxf> <out.geojson>');
+    return;
 }
+
+const inputFilename = process.argv[2];
+const outputFilename = process.argv[3];
+
+let f = fs.readFileSync(inputFilename, 'utf-8');
+const helper = new dxf.Helper(f);
+
+let parsed = helper.groups;
 
 let lines2features = (entities, layer) => {
     console.log(`processing layer ${layer}...`);
@@ -242,4 +243,4 @@ let coll = {
         .reduce((agg, f) => agg.concat(f))
 };
 
-fs.writeFileSync('4ET.geojson', JSON.stringify(coll));
+fs.writeFileSync(outputFilename, JSON.stringify(coll));
