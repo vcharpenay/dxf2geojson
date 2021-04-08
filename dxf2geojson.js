@@ -90,12 +90,12 @@ function normalize(points) {
         p3.neighbors = p3.neighbors.filter(i => !almostEq(p1.coords, points[i].coords));
 
         // add both points to middle points's neighborhood
-        if (!p2.neighbors.some(i => almostEq(p1.coords, points[i].coords)))  p2.neighbors.push(t[0]);
-        if (!p2.neighbors.some(i => almostEq(p3.coords, points[i].coords)))  p2.neighbors.push(t[2]);
+        if (!p2.neighbors.some(i => almostEq(p1.coords, points[i].coords))) p2.neighbors.push(t[0]);
+        if (!p2.neighbors.some(i => almostEq(p3.coords, points[i].coords))) p2.neighbors.push(t[2]);
 
-        // add middle point to firs and last points neighborhood
-        if (!p1.neighbors.some(i => almostEq(p2.coords, points[i].coords)))  p1.neighbors.push(t[1]);
-        if (!p3.neighbors.some(i => almostEq(p2.coords, points[i].coords)))  p3.neighbors.push(t[1]);
+        // add middle point to first and last points neighborhood
+        if (!p1.neighbors.some(i => almostEq(p2.coords, points[i].coords))) p1.neighbors.push(t[1]);
+        if (!p3.neighbors.some(i => almostEq(p2.coords, points[i].coords))) p3.neighbors.push(t[1]);
     });
 
     let pl = points.length;
@@ -104,25 +104,46 @@ function normalize(points) {
 }
 
 function points2paths(points) {
-    // TODO debug
     normalize(points);
 
     let paths = [];
-    let processed = new Set();
 
-    while (processed.size < points.length) {
+    // gather all lines that are not yet processed
+    let remaining = points.reduce((r, p, i) => {
+        p.neighbors.forEach(j => {
+            let line = new Set();
+            
+            line.add(i);
+            line.add(j);
+
+            if (!r.some(l => l.has(i) && l.has(j))) r.push(line);
+        });
+
+        return r;
+    }, []);
+
+    // FIXME why?
+    remaining = remaining.filter(l => {
+        let isPoint = l.size == 2;
+        if (!isPoint) console.error(`found incorrect point: ${l}`);
+        return isPoint;
+    });
+
+    while (remaining.length > 0) {
         let path = [];
 
-        // find starting point that has not been processed yet
-        let i = 0;
-        while (processed.has(i)) i++;
+        let [i, j] = remaining.shift();
+
+        // walk line that has not been processed yet
+        path.push(points[i].coords);
+
+        i = j;
 
         // walk path until no neighbor is found or path is closed
         while (i != undefined) {
             let p = points[i];
 
             path.push(p.coords);
-            processed.add(i);
 
             // path is closed, exit loop
             if (path.length > 1 && almostEq(p.coords, path[0])) break;
@@ -142,7 +163,12 @@ function points2paths(points) {
             };
             neighbors.sort(byDist);
 
-            i = neighbors[0];
+            let j = neighbors[0];
+
+            // mark walked line as processed
+            remaining = remaining.filter(l => !(l.has(i) && l.has(j)));
+
+            i = j;
         }
 
         paths.push(path);
@@ -211,8 +237,8 @@ let lines2features = (entities, layer) => {
     return features;
 };
 
-// let layers = ['MURS', 'CLOIS4']; // TODO PORTE, VITRE
-let layers = ['MURS'];
+let layers = ['MURS', 'CLOIS4']; // TODO PORTE, VITRE
+// let layers = ['MURS'];
 
 let coll = {
     type: 'FeatureCollection',
